@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <!-- viewport-fit=cover：让页面延伸到 iPhone 刘海/灵动岛区域，配合 CSS 的 safe-area 使用 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>记账本</title>
+
+  <!-- ===== 这几行让它在 iPhone 上"变成 App" ===== -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="记账本">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16171a" media="(prefers-color-scheme: dark)">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 顶部：月份切换 + 设置 -->
+  <header class="topbar">
+    <button class="icon-btn" id="prevMonth" aria-label="上个月">‹</button>
+    <h1 id="monthLabel">—</h1>
+    <button class="icon-btn" id="nextMonth" aria-label="下个月">›</button>
+    <button class="icon-btn settings" id="openSettings" aria-label="设置">⋯</button>
+  </header>
+
+  <main>
+    <!-- 备份提醒（超过 7 天没备份才显示） -->
+    <div class="banner" id="backupBanner" hidden>
+      <span id="backupBannerText">已经一周没备份了</span>
+      <button id="bannerBackupBtn">立即备份</button>
+    </div>
+
+    <!-- 两个账户：余额 / Visa 信用卡（点卡片可以校准金额） -->
+    <section id="accounts" class="accounts"></section>
+
+    <!-- 本月汇总：每种货币一张卡 -->
+    <section id="summary" class="summary"></section>
+
+    <!-- 支出分类占比 -->
+    <section id="breakdown" class="card"></section>
+
+    <!-- 流水列表 -->
+    <section id="list"></section>
+  </main>
+
+  <!-- 右下角"记一笔"按钮 -->
+  <button class="fab" id="openForm">＋ 记一笔</button>
+
+  <!-- ===== 记一笔：底部弹出表单 ===== -->
+  <div class="sheet-backdrop" id="formBackdrop" hidden>
+    <form class="sheet" id="entryForm" autocomplete="off">
+      <div class="sheet-handle"></div>
+
+      <div class="segmented" id="typeSeg">
+        <button type="button" data-value="out" class="active">支出</button>
+        <button type="button" data-value="in">收入</button>
+      </div>
+
+      <div class="amount-row">
+        <div class="segmented small" id="curSeg">
+          <button type="button" data-value="MYR" class="active">RM</button>
+          <button type="button" data-value="CNY">¥</button>
+        </div>
+        <!-- inputmode="decimal" 让 iPhone 弹出带小数点的数字键盘 -->
+        <input id="amountInput" type="text" inputmode="decimal" placeholder="0.00" aria-label="金额">
+      </div>
+      <div class="convert-hint" id="convertHint"></div>
+
+      <div class="acct-label" id="acctLabel">从哪里支出？</div>
+      <div class="acct-pick" id="acctSeg"></div>
+
+      <div class="chips" id="categoryChips"></div>
+
+      <div class="field-row">
+        <label>日期 <input id="dateInput" type="date"></label>
+        <label class="grow">备注 <input id="noteInput" type="text" maxlength="40" placeholder="可不填"></label>
+      </div>
+
+      <p class="form-error" id="formError" hidden></p>
+
+      <div class="sheet-actions">
+        <button type="button" class="ghost" id="cancelForm">取消</button>
+        <button type="submit" class="primary">保存</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ===== 设置 / 备份 ===== -->
+  <div class="sheet-backdrop" id="settingsBackdrop" hidden>
+    <div class="sheet">
+      <div class="sheet-handle"></div>
+      <h2>汇率</h2>
+      <div class="rate-row">
+        <span>1 RM = ¥</span>
+        <input id="rateInput" type="text" inputmode="decimal" aria-label="汇率">
+        <button type="button" id="saveRate">保存</button>
+      </div>
+      <p class="muted small" id="rateInfo"></p>
+      <p class="muted small">一般不用改。每笔账会记下当时的汇率，改汇率只影响之后的新记录。</p>
+
+      <h2 style="margin-top:20px">数据与备份</h2>
+      <p class="muted" id="backupInfo"></p>
+      <button class="row-btn" id="exportJson">导出备份（JSON，可恢复）</button>
+      <button class="row-btn" id="exportCsv">导出表格（CSV，可用 Excel 打开）</button>
+      <button class="row-btn" id="importBtn">从备份恢复…</button>
+      <input type="file" id="importFile" accept=".json,application/json" hidden>
+      <p class="muted small">数据只保存在这台手机上。建议每周导出一次，存到"文件 → iCloud 云盘"。</p>
+      <div class="sheet-actions">
+        <button type="button" class="ghost" id="closeSettings">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
