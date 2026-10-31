@@ -55,6 +55,11 @@
     <form class="sheet" id="entryForm" autocomplete="off">
       <div class="sheet-handle"></div>
 
+      <!-- AI 识别付款截图 -->
+      <button type="button" class="ai-btn" id="aiScanBtn">📷 识别付款截图（AI 自动填写）</button>
+      <input type="file" id="aiFile" accept="image/*" hidden>
+      <p class="ai-hint" id="aiHint" hidden></p>
+
       <div class="segmented" id="typeSeg">
         <button type="button" data-value="out" class="active">支出</button>
         <button type="button" data-value="in">收入</button>
@@ -93,7 +98,15 @@
   <div class="sheet-backdrop" id="settingsBackdrop" hidden>
     <div class="sheet">
       <div class="sheet-handle"></div>
-      <h2>汇率</h2>
+      <h2>AI 识别截图</h2>
+      <div class="rate-row">
+        <input id="aiKeyInput" class="key-input" type="password" placeholder="粘贴 DeepSeek API Key（sk-...）" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button type="button" id="saveAiKey">保存</button>
+      </div>
+      <p class="muted small" id="aiKeyInfo"></p>
+      <p class="muted small">Key 只存在这台手机上，不会上传到 GitHub，也不会写进备份文件。识别时截图会发送给 DeepSeek。</p>
+
+      <h2 style="margin-top:20px">汇率</h2>
       <div class="rate-row">
         <span>1 RM = ¥</span>
         <input id="rateInput" type="text" inputmode="decimal" aria-label="汇率">

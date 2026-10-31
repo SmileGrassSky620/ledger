@@ -3,7 +3,7 @@
 //  ⚠️ 每次修改了 html/css/js，都要把下面的版本号 +1，
 //     否则手机会一直用旧的缓存
 // ============================================================
-const CACHE = 'ledger-v4';
+const CACHE = 'ledger-v5';
 const FILES = [
   './',
   './index.html',

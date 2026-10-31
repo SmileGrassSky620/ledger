@@ -345,6 +345,7 @@ function openForm() {
   $('noteInput').value = '';
   $('dateInput').value = toDateStr(new Date());
   $('formError').hidden = true;
+  $('aiHint').hidden = true;
   syncForm();
   $('formBackdrop').hidden = false;
   setTimeout(() => $('amountInput').focus(), 50);
@@ -548,13 +549,171 @@ function saveManualRate() {
   saveMeta(); updateRateInfo(); toast('已保存，之后的记账按这个汇率');
 }
 
+// ============================================================
+//  AI 识别付款截图（DeepSeek V4.1 Flash，API 里叫 deepseek-flash）
+//  流程：选图片 → 压缩 → 转成 base64 → 发给 DeepSeek → 拿回 JSON → 填进表单
+//  注意：只填表单，不自动保存；账户还是要你自己点
+// ============================================================
+const AI_KEY_STORE = 'ledger.ai.key';   // 单独存，不会被导出到备份里
+const AI_URL = 'https://api.deepseek.com/chat/completions';
+const AI_MODEL = 'deepseek-flash';
+
+function getAiKey() {
+  try { return localStorage.getItem(AI_KEY_STORE) || ''; } catch { return ''; }
+}
+
+// 把图片缩到最长边 1280 像素再发送：上传更快、更省钱，识别效果基本不受影响
+async function compressImage(file, maxSide = 1280) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('图片打不开'));
+      i.src = url;
+    });
+    const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(img.naturalWidth * scale);
+    canvas.height = Math.round(img.naturalHeight * scale);
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.85);   // "data:image/jpeg;base64,...."
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function buildPrompt() {
+  return `你是记账助手。看这张付款或收款截图（可能来自支付宝、微信、银行App、Touch 'n Go、GrabPay、信用卡消费短信、购物小票等），提取这一笔交易。
+只输出一个 JSON 对象，不要输出任何其他文字：
+{"type":"out 或 in","amount":正数金额(不带符号和货币),"currency":"MYR 或 CNY","category":"从下面的分类里选一个","note":"商家名或简短说明，不超过15个字","date":"YYYY-MM-DD，看不出日期就填 null","card":"截图明确显示用的是 Visa 或信用卡就填 visa，否则填 null"}
+支出分类：${CATEGORIES.out.join('、')}
+收入分类：${CATEGORIES.in.join('、')}
+货币判断：RM、MYR、马币 → MYR；¥、￥、元、CNY、RMB → CNY。
+今天是 ${toDateStr(new Date())}。如果截图里有多笔交易，只取最主要、金额最明显的那一笔。
+如果图里根本不是一笔交易，输出 {"error":"简短原因"}。`;
+}
+
+async function callDeepSeek(dataUrl) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);   // 最多等 60 秒
+  let res;
+  try {
+    res = await fetch(AI_URL, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getAiKey()}` },
+      body: JSON.stringify({
+        model: AI_MODEL,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: buildPrompt() },
+            { type: 'image_url', image_url: { url: dataUrl } },
+          ],
+        }],
+        temperature: 0,
+      }),
+    });
+  } catch (err) {
+    throw new Error(err.name === 'AbortError' ? '等太久了，请再试一次' : '连不上 DeepSeek，请检查网络');
+  } finally {
+    clearTimeout(timer);
+  }
+  if (res.status === 401) throw new Error('API Key 不对，请在设置里重新粘贴');
+  if (res.status === 402) throw new Error('DeepSeek 账户余额不足，请去开放平台充值');
+  if (res.status === 429) throw new Error('请求太频繁，等一下再试');
+  if (!res.ok) throw new Error(`识别失败（错误码 ${res.status}）`);
+
+  const data = await res.json();
+  const text = (data.choices && data.choices[0] && data.choices[0].message.content) || '';
+  const match = text.match(/\{[\s\S]*\}/);   // 从回复里抠出 JSON
+  if (!match) throw new Error('AI 没看懂这张图');
+  return JSON.parse(match[0]);
+}
+
+// 把 AI 的结果填进表单
+function applyAiResult(r) {
+  if (r.error) throw new Error('这张图好像不是付款记录：' + r.error);
+  const amount = Number(r.amount);
+  if (!(amount > 0)) throw new Error('没认出金额，请手动填写');
+
+  form.type = r.type === 'in' ? 'in' : 'out';
+  if (SYMBOL[r.currency]) form.currency = r.currency;
+  const cats = CATEGORIES[form.type];
+  form.category = cats.includes(r.category) ? r.category : cats[cats.length - 1];
+  $('amountInput').value = amount.toFixed(2);
+  if (r.note) $('noteInput').value = String(r.note).slice(0, 40);
+  // 日期：格式对、而且不是未来的日期才用
+  if (/^\d{4}-\d{2}-\d{2}$/.test(r.date || '') && r.date <= toDateStr(new Date())) $('dateInput').value = r.date;
+  form.account = null;   // 账户还是让你自己选
+  syncForm();
+
+  let msg = '✅ 已识别，检查一下，然后选账户、点保存';
+  if (r.card === 'visa') msg += '（截图里看起来用的是 Visa 卡）';
+  showAiHint(msg, false);
+}
+
+function showAiHint(msg, isErr) {
+  const h = $('aiHint');
+  h.textContent = msg;
+  h.classList.toggle('err', isErr);
+  h.hidden = false;
+}
+
+async function scanReceipt(file) {
+  const btn = $('aiScanBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ 识别中…（大约几秒）';
+  $('aiHint').hidden = true;
+  try {
+    const dataUrl = await compressImage(file);
+    applyAiResult(await callDeepSeek(dataUrl));
+  } catch (err) {
+    showAiHint(err.message || '识别失败', true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📷 识别付款截图（AI 自动填写）';
+  }
+}
+
+$('aiScanBtn').onclick = () => {
+  if (!getAiKey()) {
+    toast('先在设置里填 DeepSeek API Key');
+    closeForm(); updateBackupInfo(); updateRateInfo(); updateAiKeyInfo();
+    $('settingsBackdrop').hidden = false;
+    return;
+  }
+  $('aiFile').click();
+};
+$('aiFile').onchange = e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (f) scanReceipt(f);
+};
+
+function updateAiKeyInfo() {
+  const k = getAiKey();
+  $('aiKeyInput').value = '';
+  $('aiKeyInfo').textContent = k ? `已保存：${k.slice(0, 5)}…${k.slice(-4)}（要换就粘贴新的再保存）` : '还没有设置';
+}
+$('saveAiKey').onclick = () => {
+  const k = $('aiKeyInput').value.trim();
+  try {
+    if (k) localStorage.setItem(AI_KEY_STORE, k);
+    else localStorage.removeItem(AI_KEY_STORE);
+  } catch {}
+  updateAiKeyInfo();
+  toast(k ? 'Key 已保存' : 'Key 已清除');
+};
+
 // ---------- 绑定按钮 ----------
 $('saveRate').onclick = saveManualRate;
 $('openForm').onclick = openForm;
 $('cancelForm').onclick = closeForm;
 $('formBackdrop').addEventListener('click', e => { if (e.target.id === 'formBackdrop') closeForm(); });
 
-$('openSettings').onclick = () => { updateBackupInfo(); updateRateInfo(); $('settingsBackdrop').hidden = false; };
+$('openSettings').onclick = () => { updateBackupInfo(); updateRateInfo(); updateAiKeyInfo(); $('settingsBackdrop').hidden = false; };
 $('closeSettings').onclick = () => ($('settingsBackdrop').hidden = true);
 $('settingsBackdrop').addEventListener('click', e => { if (e.target.id === 'settingsBackdrop') $('settingsBackdrop').hidden = true; });
 
