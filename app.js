@@ -731,7 +731,22 @@ $('nextMonth').onclick = () => { viewMonth = shiftMonth(viewMonth, 1); render();
 
 // ---------- 注册 Service Worker（让它能离线打开） ----------
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
+  window.addEventListener('load', async () => {
+    // updateViaCache: 'none' → 每次都去网上检查 sw.js 有没有新版本
+    const reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
+    // 每次从后台切回 App 时，也检查一下更新
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reg.update();
+    });
+  });
+  // 新版本接管后自动刷新一次页面，马上用上新版
+  let reloaded = false;
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloaded) return;   // 第一次安装不用刷新
+    reloaded = true;
+    location.reload();
+  });
 }
 
 render();
