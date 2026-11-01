@@ -230,57 +230,50 @@ function renderAccounts() {
   }).join('');
 }
 
-function renderSummary(list) {
-  // 本月用到的货币；一笔都没有时默认显示马币
-  const curs = ['MYR', 'CNY'].filter(c => list.some(e => e.currency === c));
-  if (curs.length === 0) curs.push(meta.lastCurrency || 'MYR');
+// 一笔账分别折算成人民币、马币是多少（分）。用这笔账自己记下的汇率
+function cnyOf(e) { return e.currency === 'CNY' ? e.cents : convertedOf(e); }
+function myrOf(e) { return e.currency === 'MYR' ? e.cents : convertedOf(e); }
 
-  $('summary').innerHTML = curs.map(cur => {
-    let out = 0, inc = 0, outConv = 0;
-    for (const e of list) {
-      if (e.currency !== cur) continue;
-      if (e.type === 'out') { out += e.cents; outConv += convertedOf(e); }
-      else inc += e.cents;
-    }
-    return `
-      <div class="sum-card">
-        <div class="sum-head"><span>本月支出</span><span>${cur === 'MYR' ? '马币' : '人民币'}</span></div>
-        <div class="sum-big">${money(out, cur)}</div>
-        <div class="sum-conv">≈ ${money(outConv, otherCur(cur))}</div>
-        <div class="sum-row">
-          <span>收入 <b>${money(inc, cur)}</b></span>
-          <span>结余 <b>${money(inc - out, cur)}</b></span>
-        </div>
-      </div>`;
-  }).join('');
+// 本月汇总：两种货币的账合并在一起，同时用人民币和马币显示
+function renderSummary(list) {
+  let outCny = 0, outMyr = 0, inCny = 0, inMyr = 0;
+  for (const e of list) {
+    if (e.type === 'out') { outCny += cnyOf(e); outMyr += myrOf(e); }
+    else { inCny += cnyOf(e); inMyr += myrOf(e); }
+  }
+  $('summary').innerHTML = `
+    <div class="sum-card">
+      <div class="sum-head"><span>本月支出</span><span>人民币 + 马币合计</span></div>
+      <div class="sum-big">${money(outCny, 'CNY')}</div>
+      <div class="sum-conv">≈ ${money(outMyr, 'MYR')}</div>
+      <div class="sum-row">
+        <span>收入 <b>${money(inCny, 'CNY')}</b><small>≈ ${money(inMyr, 'MYR')}</small></span>
+        <span>结余 <b>${money(inCny - outCny, 'CNY')}</b><small>≈ ${money(inMyr - outMyr, 'MYR')}</small></span>
+      </div>
+    </div>`;
 }
 
+// 支出分类：也合并两种货币，按人民币排序，同时显示马币
 function renderBreakdown(list) {
   const box = $('breakdown');
   const outs = list.filter(e => e.type === 'out');
   if (outs.length === 0) { box.hidden = true; return; }
   box.hidden = false;
 
-  // 按货币分组，每组里再按分类求和
-  const byCur = {};
+  const cats = {};   // { 餐饮: { cny, myr } }
   for (const e of outs) {
-    byCur[e.currency] ??= {};
-    byCur[e.currency][e.category] = (byCur[e.currency][e.category] || 0) + e.cents;
+    cats[e.category] ??= { cny: 0, myr: 0 };
+    cats[e.category].cny += cnyOf(e);
+    cats[e.category].myr += myrOf(e);
   }
-
-  let html = '<h3>支出分类</h3>';
-  for (const [cur, cats] of Object.entries(byCur)) {
-    const rows = Object.entries(cats).sort((a, b) => b[1] - a[1]);
-    const max = rows[0][1];
-    if (Object.keys(byCur).length > 1) html += `<div class="muted small">${cur === 'MYR' ? '马币' : '人民币'}</div>`;
-    html += rows.map(([cat, cents]) => `
-      <div class="bar-row">
-        <span>${esc(cat)}</span>
-        <div class="bar"><i style="width:${(cents / max * 100).toFixed(1)}%"></i></div>
-        <span class="bar-val">${money(cents, cur)}</span>
-      </div>`).join('');
-  }
-  box.innerHTML = html;
+  const rows = Object.entries(cats).sort((a, b) => b[1].cny - a[1].cny);
+  const max = rows[0][1].cny || 1;
+  box.innerHTML = '<h3>支出分类</h3>' + rows.map(([cat, v]) => `
+    <div class="bar-row">
+      <span>${esc(cat)}</span>
+      <div class="bar"><i style="width:${(v.cny / max * 100).toFixed(1)}%"></i></div>
+      <span class="bar-val">${money(v.cny, 'CNY')}<small>≈ ${money(v.myr, 'MYR')}</small></span>
+    </div>`).join('');
 }
 
 function renderList(list) {
